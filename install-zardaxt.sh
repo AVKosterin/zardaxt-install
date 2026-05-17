@@ -11,7 +11,7 @@
 #
 # Переопределяемые переменные окружения:
 #   ZARDAXT_DIR      каталог установки           (по умолчанию /opt/zardaxt)
-#   ZARDAXT_PORT     порт HTTP API               (по умолчанию 8249)
+#   ZARDAXT_PORT     порт HTTP API               (по умолчанию 80)
 #   ZARDAXT_BIND     адрес привязки API          (по умолчанию ::  — dual-stack IPv4+IPv6)
 #   ZARDAXT_API_KEY  ключ для выгрузки всей базы  (по умолчанию случайный)
 #   ZARDAXT_IFACE    сетевой интерфейс захвата    (по умолчанию интерфейс default-маршрута)
@@ -23,7 +23,7 @@ set -euo pipefail
 # ---- параметры -------------------------------------------------------------
 ZARDAXT_DIR="${ZARDAXT_DIR:-/opt/zardaxt}"
 ZARDAXT_REPO="${ZARDAXT_REPO:-https://github.com/NikolaiT/zardaxt.git}"
-ZARDAXT_PORT="${ZARDAXT_PORT:-8249}"
+ZARDAXT_PORT="${ZARDAXT_PORT:-80}"
 ZARDAXT_BIND="${ZARDAXT_BIND:-::}"
 ZARDAXT_API_KEY="${ZARDAXT_API_KEY:-$(openssl rand -hex 16)}"
 ZARDAXT_IFACE="${ZARDAXT_IFACE:-$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')}"
