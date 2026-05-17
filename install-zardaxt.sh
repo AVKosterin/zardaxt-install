@@ -14,6 +14,7 @@
 #   ZARDAXT_PORT     порт HTTP API               (по умолчанию 8249)
 #   ZARDAXT_BIND     адрес привязки API          (по умолчанию ::  — dual-stack IPv4+IPv6)
 #   ZARDAXT_API_KEY  ключ для выгрузки всей базы  (по умолчанию случайный)
+#   ZARDAXT_IFACE    сетевой интерфейс захвата    (по умолчанию интерфейс default-маршрута)
 #
 # Пример:  sudo ZARDAXT_PORT=9000 ./install-zardaxt.sh
 #
@@ -25,6 +26,7 @@ ZARDAXT_REPO="${ZARDAXT_REPO:-https://github.com/NikolaiT/zardaxt.git}"
 ZARDAXT_PORT="${ZARDAXT_PORT:-8249}"
 ZARDAXT_BIND="${ZARDAXT_BIND:-::}"
 ZARDAXT_API_KEY="${ZARDAXT_API_KEY:-$(openssl rand -hex 16)}"
+ZARDAXT_IFACE="${ZARDAXT_IFACE:-$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')}"
 SERVICE_NAME="zardaxt"
 
 log()  { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
@@ -34,6 +36,7 @@ die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 # ---- предусловия -----------------------------------------------------------
 [ "$(id -u)" -eq 0 ] || die "Запускай из-под root или через sudo."
 command -v apt-get >/dev/null 2>&1 || die "Скрипт рассчитан на Debian/Ubuntu (apt-get не найден)."
+[ -n "$ZARDAXT_IFACE" ] || die "Не удалось определить сетевой интерфейс. Запусти с ZARDAXT_IFACE=<имя>, напр.: sudo ZARDAXT_IFACE=eth0 bash install-zardaxt.sh"
 
 # ---- 1. системные пакеты ---------------------------------------------------
 log "Устанавливаю системные зависимости..."
@@ -68,6 +71,7 @@ python3 -m venv --system-site-packages "$ZARDAXT_DIR/venv"
 log "Пишу конфиг $ZARDAXT_DIR/zardaxt.json..."
 cat > "$ZARDAXT_DIR/zardaxt.json" <<EOF
 {
+  "interface": "${ZARDAXT_IFACE}",
   "api_server_ip": "${ZARDAXT_BIND}",
   "api_server_port": ${ZARDAXT_PORT},
   "verbose": false,
@@ -99,6 +103,7 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
+systemctl reset-failed "${SERVICE_NAME}.service" 2>/dev/null || true
 systemctl enable --now "${SERVICE_NAME}.service"
 
 # ---- 6. firewall (если ufw активен) ----------------------------------------
@@ -110,11 +115,10 @@ fi
 # ---- 7. итог + проверка ----------------------------------------------------
 sleep 2
 PUB_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-CAP_IF="$(ip route show default 2>/dev/null | awk '{print $5; exit}')"
 echo
 if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
   log "Сервис ${SERVICE_NAME} запущен."
-  log "Интерфейс захвата (default gw): ${CAP_IF:-неизвестен}"
+  log "Интерфейс захвата: ${ZARDAXT_IFACE}"
   log "API:       http://${PUB_IP:-<IP_сервера>}:${ZARDAXT_PORT}/classify"
   log "API key:   ${ZARDAXT_API_KEY}"
   log "Логи:      journalctl -u ${SERVICE_NAME} -f"
