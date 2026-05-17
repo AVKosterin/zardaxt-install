@@ -104,7 +104,10 @@ EOF
 
 systemctl daemon-reload
 systemctl reset-failed "${SERVICE_NAME}.service" 2>/dev/null || true
-systemctl enable --now "${SERVICE_NAME}.service"
+systemctl enable "${SERVICE_NAME}.service" >/dev/null 2>&1
+# именно restart, а не enable --now: для уже запущенного сервиса start = no-op,
+# и новый конфиг (порт и пр.) не подхватится
+systemctl restart "${SERVICE_NAME}.service"
 
 # ---- 6. firewall (если ufw активен) ----------------------------------------
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
