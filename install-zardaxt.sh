@@ -10,11 +10,11 @@
 # Запуск: только из-под root или через sudo.
 #
 # Переопределяемые переменные окружения:
-#   ZARDAXT_DIR      каталог установки           (по умолчанию /opt/zardaxt)
-#   ZARDAXT_PORT     порт HTTP API               (по умолчанию 80)
-#   ZARDAXT_BIND     адрес привязки API          (по умолчанию ::  — dual-stack IPv4+IPv6)
-#   ZARDAXT_API_KEY  ключ для выгрузки всей базы  (по умолчанию случайный)
-#   ZARDAXT_IFACE    сетевой интерфейс захвата    (по умолчанию интерфейс default-маршрута)
+#   ZARDAXT_DIR           каталог установки                (по умолчанию /opt/zardaxt)
+#   ZARDAXT_PORT          публичный порт nginx              (по умолчанию 80)
+#   ZARDAXT_BACKEND_PORT  локальный порт zardaxt за nginx   (по умолчанию 8249)
+#   ZARDAXT_API_KEY       ключ для выгрузки всей базы        (по умолчанию случайный)
+#   ZARDAXT_IFACE         сетевой интерфейс захвата          (по умолчанию интерфейс default-маршрута)
 #
 # Пример:  sudo ZARDAXT_PORT=9000 ./install-zardaxt.sh
 #
@@ -24,7 +24,7 @@ set -euo pipefail
 ZARDAXT_DIR="${ZARDAXT_DIR:-/opt/zardaxt}"
 ZARDAXT_REPO="${ZARDAXT_REPO:-https://github.com/NikolaiT/zardaxt.git}"
 ZARDAXT_PORT="${ZARDAXT_PORT:-80}"
-ZARDAXT_BIND="${ZARDAXT_BIND:-::}"
+ZARDAXT_BACKEND_PORT="${ZARDAXT_BACKEND_PORT:-8249}"
 ZARDAXT_API_KEY="${ZARDAXT_API_KEY:-$(openssl rand -hex 16)}"
 ZARDAXT_IFACE="${ZARDAXT_IFACE:-$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')}"
 SERVICE_NAME="zardaxt"
@@ -72,8 +72,8 @@ log "Пишу конфиг $ZARDAXT_DIR/zardaxt.json..."
 cat > "$ZARDAXT_DIR/zardaxt.json" <<EOF
 {
   "interface": "${ZARDAXT_IFACE}",
-  "api_server_ip": "${ZARDAXT_BIND}",
-  "api_server_port": ${ZARDAXT_PORT},
+  "api_server_ip": "::1",
+  "api_server_port": ${ZARDAXT_BACKEND_PORT},
   "verbose": false,
   "api_key": "${ZARDAXT_API_KEY}",
   "pcap_filter": "tcp",
@@ -109,18 +109,44 @@ systemctl enable "${SERVICE_NAME}.service" >/dev/null 2>&1
 # и новый конфиг (порт и пр.) не подхватится
 systemctl restart "${SERVICE_NAME}.service"
 
-# ---- 6. firewall (если ufw активен) ----------------------------------------
+# ---- 6. nginx reverse proxy ------------------------------------------------
+# zardaxt API слушает только [::1]:BACKEND_PORT; наружу торчит nginx на :PORT.
+# nginx передаёт реальный IP клиента в X-Real-IP — иначе zardaxt (IPv6-сокет)
+# видит IPv4-клиента как ::ffff:1.2.3.4 и не находит для него отпечаток.
+log "Ставлю и настраиваю nginx (reverse proxy :${ZARDAXT_PORT} -> zardaxt)..."
+apt-get install -y nginx
+cat > /etc/nginx/sites-available/zardaxt <<EOF
+server {
+    listen ${ZARDAXT_PORT} default_server;
+    listen [::]:${ZARDAXT_PORT} default_server;
+    server_name _;
+
+    location / {
+        proxy_pass http://[::1]:${ZARDAXT_BACKEND_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+ln -sf /etc/nginx/sites-available/zardaxt /etc/nginx/sites-enabled/zardaxt
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl enable nginx >/dev/null 2>&1 || true
+systemctl restart nginx
+
+# ---- 7. firewall (если ufw активен) ----------------------------------------
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   log "ufw активен — открываю порт ${ZARDAXT_PORT}/tcp..."
   ufw allow "${ZARDAXT_PORT}/tcp" >/dev/null || true
 fi
 
-# ---- 7. итог + проверка ----------------------------------------------------
+# ---- 8. итог + проверка ----------------------------------------------------
 sleep 2
 PUB_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
-  log "Сервис ${SERVICE_NAME} запущен."
+  log "Сервис ${SERVICE_NAME} запущен (backend [::1]:${ZARDAXT_BACKEND_PORT})."
+  log "Фронт:     nginx на порту ${ZARDAXT_PORT}"
   log "Интерфейс захвата: ${ZARDAXT_IFACE}"
   log "API:       http://${PUB_IP:-<IP_сервера>}:${ZARDAXT_PORT}/classify"
   log "API key:   ${ZARDAXT_API_KEY}"
